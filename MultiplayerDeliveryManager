@@ -1,0 +1,257 @@
+using System;
+using System.Collections;
+using System.Collections.Generic;
+using ExitGames.Client.Photon;
+using UnityEngine;
+using Random = UnityEngine.Random;
+using Photon.Pun;
+using UnityEngine.UI;
+
+public class MultiplayerDeliveryManager : MonoBehaviourPunCallbacks
+{
+    [SerializeField] private KeyCode _generateNewDelivery;
+    public GameObject _player;
+    
+    [Header("Delivery Specifics")]
+    [SerializeField] private float _easyDeliveryTime;
+    [SerializeField] private float _mediumDeliveryTime;
+    [SerializeField] private float _hardDeliveryTime;
+    [SerializeField] private float _easyRequiredQuality;
+    [SerializeField] private float _midRequiredQuality;
+    [SerializeField] private float _hardRequiredQuality;
+    [SerializeField] private float _easyMaxPayout;
+    [SerializeField] private float _mediumMaxPayout;
+    [SerializeField] private float _hardMaxPayout;
+    
+    [Header("UI")]
+    [SerializeField] private KeyCode _bringUpUI;
+    [SerializeField] private Animator _UIAnimator;
+    [SerializeField] private DeliveryItem _deliveryItemPrefab;
+    [SerializeField] private Transform _deliveryItemHolder;
+    [SerializeField] private GameObject _dropOffMapIndicator;
+    private bool _isUp = false;
+
+    [Header("Locations")]
+    [SerializeField] private List<GameObject> restaurants;
+    [SerializeField] private List<GameObject> houses;
+
+    public DeliveryObject _newDelivery = new DeliveryObject();
+    public DeliveryObject _currentDelivery = new DeliveryObject();
+    public List<DeliveryObject> _avaliableDeliveries = new List<DeliveryObject>();
+    private List<GameObject> _unusedPoints;
+
+    private GameObject _currentMapIndicator;
+    private string _newMessage;
+
+    void Start()
+    {
+        _player = PlayerMovement.LocalPlayerInstance.gameObject;
+    }
+
+    private void Update()
+    {
+        //Temp for testing
+        if (Input.GetKeyDown(_generateNewDelivery))
+        {
+            GenerateDelivery();
+        }
+
+        if (Input.GetKeyDown(_bringUpUI))
+        {
+            if (!_isUp)
+            {
+                _UIAnimator.SetTrigger("BringUp");
+                Cursor.lockState = CursorLockMode.None;
+                Cursor.visible = true;
+                _isUp = true;
+            }
+            else
+            {
+                _UIAnimator.SetTrigger("PutAway");
+                Cursor.lockState = CursorLockMode.Locked;
+                Cursor.visible = false;
+                _isUp = false;
+            }
+        }
+    }
+
+    //This is where we generate the next incoming delivery and set up all of the UI around it
+    #region Delivery Generation
+    private void GenerateDelivery()
+    {
+        _unusedPoints = new List<GameObject>();
+        foreach (var spot in restaurants)
+        {
+            _unusedPoints.Add(spot);
+        }
+
+        int randDif = (int)Random.Range(0, 3);
+        _newDelivery = ReturnDelivery(randDif);
+
+        string serializedDO = SendToString(_newDelivery);
+        photonView.RPC("SetDelivery", RpcTarget.All, serializedDO);
+    }
+    
+    [PunRPC] 
+    void SetDelivery(string serDO)
+    {
+        DeliveryObject newDeliveryObject = SendToDO(serDO);
+        
+        _avaliableDeliveries.Add(newDeliveryObject);
+        int deliveryIndex = _avaliableDeliveries.Count - 1;
+
+        DeliveryItem newDeliveryItem = Instantiate(_deliveryItemPrefab, _deliveryItemHolder);
+        newDeliveryItem.SetDeliveryItemText(newDeliveryObject.difficulty.ToString(), newDeliveryObject.maxPayout.ToString(), "Preparing", deliveryIndex);
+    }
+
+    //used to set the specifics about a delivery based on the difficulty input
+    private DeliveryObject ReturnDelivery(float difficulty)
+    {
+        switch (difficulty)
+        {
+            //easy
+            case 0:
+            {
+                DeliveryObject deliveryEasy = new DeliveryObject();
+                deliveryEasy.difficulty = Difficulty.Easy;
+                deliveryEasy.pickupPoint = ReturnPickupLocation();
+                deliveryEasy.dropOffPoint = ReturnDeliveryLocation("easy");
+                Debug.Log(deliveryEasy.dropOffPoint);
+                deliveryEasy.resturantIcon = deliveryEasy.pickupPoint.GetComponent<PickupDropoffPoint>().sprite;
+                deliveryEasy.deliveryTime = _easyDeliveryTime;
+                deliveryEasy.reqQuality = _easyRequiredQuality;
+                deliveryEasy.maxPayout = _easyMaxPayout;
+                deliveryEasy.deduction = _easyMaxPayout * 0.75f;
+                return deliveryEasy;
+            }
+            //medium
+            case 1:
+            {
+                DeliveryObject deliveryMedium = new DeliveryObject();
+                deliveryMedium.difficulty = Difficulty.Medium;
+                deliveryMedium.pickupPoint = ReturnPickupLocation();
+                deliveryMedium.dropOffPoint = ReturnDeliveryLocation("medium");
+                deliveryMedium.resturantIcon = deliveryMedium.pickupPoint.GetComponent<PickupDropoffPoint>().sprite;
+                deliveryMedium.deliveryTime = _mediumDeliveryTime;
+                deliveryMedium.reqQuality = _midRequiredQuality;
+                deliveryMedium.maxPayout = _mediumMaxPayout;
+                deliveryMedium.deduction = _mediumMaxPayout * 0.75f;
+                return deliveryMedium;
+            }
+            //hard
+            case 2:
+            {
+                DeliveryObject deliveryHard = new DeliveryObject();
+                deliveryHard.difficulty = Difficulty.Hard;
+                deliveryHard.pickupPoint = ReturnPickupLocation();
+                deliveryHard.dropOffPoint = ReturnDeliveryLocation("hard");
+                deliveryHard.resturantIcon = deliveryHard.pickupPoint.GetComponent<PickupDropoffPoint>().sprite;
+                deliveryHard.deliveryTime = _hardDeliveryTime;
+                deliveryHard.reqQuality = _hardRequiredQuality;
+                deliveryHard.maxPayout = _hardMaxPayout;
+                deliveryHard.deduction = _hardMaxPayout * 0.75f;
+                return deliveryHard;
+            }
+            default:
+                return null;
+        }
+    }
+     //picks a random pick up point from a list of unused pickup points
+    private GameObject ReturnPickupLocation()
+    {
+         Debug.Log(_unusedPoints.Count);
+         int rand = Random.Range(0, _unusedPoints.Count);
+         GameObject point = _unusedPoints[rand];
+         _unusedPoints.Remove(point);
+         return point;
+    }
+     //picks a drop off point based on difficulty and player location to the drop off point
+    private GameObject ReturnDeliveryLocation(String type)
+    {
+        List<float> distances = new List<float>();
+        foreach (var house in houses)
+        {
+            float distance = Vector3.Distance(_player.transform.position, house.transform.position);
+            distances.Add(distance); 
+        }
+        distances.Sort();
+
+        foreach (var house in houses)
+        {
+            switch (type)
+            {
+                 case "easy" when Vector3.Distance(_player.transform.position, house.transform.position) == distances[0]:
+                     return house;
+                 case "medium" when Vector3.Distance(_player.transform.position, house.transform.position) == distances[distances.Count/2]:
+                     return house;
+                 case "hard" when Vector3.Distance(_player.transform.position, house.transform.position) == distances[distances.Count - 1]:
+                     return house;
+            }
+        }
+        return null;
+    }
+    //Sets the UI on the minimap based on the delivery clicked on (NOTE: Idexing system will need to be changed once the deliveries are completeabel)
+    public void SetMiniMapUI(int deliveryIndex)
+    {
+        foreach (var restaurant in restaurants)
+        {
+            GameObject indicator = restaurant.GetComponent<PickupDropoffPoint>().mapIndicator;
+            indicator.SetActive(false);
+        }
+
+        _currentMapIndicator = _avaliableDeliveries[deliveryIndex].pickupPoint.GetComponent<PickupDropoffPoint>().mapIndicator;
+        _currentMapIndicator.SetActive(true);
+        
+        _dropOffMapIndicator.transform.position = new Vector3(_avaliableDeliveries[deliveryIndex].dropOffPoint.transform.position.x, 100, _avaliableDeliveries[deliveryIndex].dropOffPoint.transform.position.z);
+        _dropOffMapIndicator.SetActive(true);
+        //_deliveryEasyImage.sprite = easyDel.resturantIcon.sprite;
+    }
+    //Pun RPC calls can not send custom classes as parameters so the DeliveryObject class must be converted into a string to be sent to every player
+    private string SendToString(DeliveryObject newDelivery)
+    {
+        string toString = newDelivery.difficulty.ToString() + " " + newDelivery.pickupPoint.name + " " +
+                          newDelivery.dropOffPoint.name + " " + newDelivery.resturantIcon.sprite.name + " " +
+                          newDelivery.deliveryTime + " " + newDelivery.reqQuality + " " + newDelivery.maxPayout +
+                          " " + newDelivery.deduction + " " + newDelivery.currentQuality + " 0 " + " 0 " + "0";
+        Debug.Log(toString);
+        return toString;
+    }
+    //The DeliveryObject string passed through the punRPC call must be parced and converted back into a DeliveryObject so it can be used
+    private DeliveryObject SendToDO(string message)
+    {
+        DeliveryObject toDO = new DeliveryObject();
+        string[] substring = new string[12];
+
+        _newMessage = message;
+        for (int i = 0; i < _newMessage.Length; i++)
+        {
+           int subjectIndex = _newMessage.IndexOf(" ", 1);
+           string subject = _newMessage.Substring(0, subjectIndex);
+           _newMessage = _newMessage.Substring(subjectIndex + 1);
+
+           substring[i] = subject;
+        }
+        
+        foreach (var s in substring)
+        {
+            Debug.Log(s);
+        }
+
+        toDO.difficulty = (Difficulty)Enum.Parse(typeof(Difficulty), substring[0]);
+        toDO.pickupPoint = GameObject.Find(substring[1]);
+        toDO.dropOffPoint = GameObject.Find(substring[2]);
+        //toDO.resturantIcon = Image.
+        toDO.deliveryTime = int.Parse(substring[4]);
+        toDO.reqQuality = int.Parse(substring[5]);
+        toDO.maxPayout = int.Parse(substring[6]);
+        toDO.deduction = int.Parse(substring[7]);
+        toDO.currentQuality = int.Parse(substring[8]);
+
+        return toDO;
+    }
+
+    #endregion
+
+    
+
+}
